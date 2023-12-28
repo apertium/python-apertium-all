@@ -6,7 +6,10 @@ namespace py = pybind11;
 
 #include <lttoolbox/acx.h>
 #include <lttoolbox/alphabet.h>
+#include <lttoolbox/compression.h>
+#include <lttoolbox/file_utils.h>
 #include <lttoolbox/fst_processor.h>
+#include <lttoolbox/input_file.h>
 #include <lttoolbox/string_utils.h>
 #include <lttoolbox/transducer.h>
 
@@ -162,6 +165,59 @@ PYBIND11_MODULE(lttoolbox, m) {
 	m.doc() = "LTTOOLBOX!";
 
 	{
+		auto io = m.def_submodule("io", "blah");
+		py::class_<InputFile>(io, "InputFile")
+			.def(py::init<>())
+			.def("open", &InputFile::open)
+			.def("open_in_memory", &InputFile::open_in_memory)
+			.def("open_or_exit", &InputFile::open_or_exit)
+			.def("close", &InputFile::close)
+			.def("wrap", &InputFile::wrap)
+			.def("get", &InputFile::get)
+			.def("peek", &InputFile::peek)
+			.def("unget", &InputFile::unget)
+			.def("eof", &InputFile::eof)
+			.def("rewind", &InputFile::rewind)
+			.def("readBlock", &InputFile::readBlock)
+			.def("finishWBlank", &InputFile::finishWBlank)
+			.def("readBlank", &InputFile::readBlank);
+
+		io.attr("HEADER_LTTOOLBOX") = HEADER_LTTOOLBOX;
+		py::enum_<LT_FEATURES>(io, "LT_FEATURES")
+			.value("LTF_UNKNOWN", LT_FEATURES::LTF_UNKNOWN)
+			.value("LTF_RESERVED", LT_FEATURES::LTF_RESERVED)
+			.export_values();
+
+		io.attr("HEADER_TRANSDUCER") = HEADER_TRANSDUCER;
+		py::enum_<TD_FEATURES>(io, "TD_FEATURES")
+			.value("TDF_WEIGHTS", TD_FEATURES::TDF_WEIGHTS)
+			.value("TDF_UNKNOWN", TD_FEATURES::TDF_UNKNOWN)
+			.value("TDF_RESERVED", TD_FEATURES::TDF_RESERVED)
+			.export_values();
+
+		io.def("write_u64", py::overload_cast<FILE*, uint64_t>(&write_u64));
+		io.def("write_u64_le",
+			   [](FILE* out, uint64_t value) {
+				   write_u64_le(out, value);
+			   });
+		io.def("read_u64", py::overload_cast<FILE*>(&read_u64));
+		io.def("read_u64_le",
+			   [](FILE* in) {
+				   return read_u64_le(in);
+			   });
+		io.def("multibyte_write",
+			   py::overload_cast<unsigned int, FILE*>(&Compression::multibyte_write));
+		io.def("multibyte_read",
+			   py::overload_cast<FILE*>(&Compression::multibyte_read));
+		io.def("string_write", &Compression::string_write);
+		io.def("string_read", &Compression::string_read);
+		io.def("long_multibyte_write",
+			   py::overload_cast<const double&, FILE*>(&Compression::long_multibyte_write));
+		io.def("long_multibyte_read",
+			   py::overload_cast<FILE*>(&Compression::long_multibyte_read));
+	}
+
+	{
 		auto fst = m.def_submodule("fst", "blah");
 
 		py::enum_<Alphabet::Side>(fst, "Side")
@@ -261,6 +317,64 @@ PYBIND11_MODULE(lttoolbox, m) {
 		su.def("copycase", &StringUtils::copycase, "blah");
 		su.def("caseequal", &StringUtils::caseequal, "blah");
 		su.def("merge_wblanks", &StringUtils::merge_wblanks, "blah");
+	}
+
+	{
+		auto proc = m.def_submodule("proc", "blah");
+
+		py::enum_<GenerationMode>(proc, "GenerationMode")
+			.value("gm_clean", GenerationMode::gm_clean)
+			.value("gm_unknown", GenerationMode::gm_unknown)
+			.value("gm_all", GenerationMode::gm_all)
+			.value("gm_tagged", GenerationMode::gm_tagged)
+			.value("gm_tagged_nm", GenerationMode::gm_tagged_nm)
+			.value("gm_carefulcase", GenerationMode::gm_carefulcase)
+			.export_values();
+
+		py::class_<FSTProcessor>(proc, "FSTProcessor")
+			.def(py::init<>())
+			.def("initAnalysis", &FSTProcessor::initAnalysis)
+			.def("initTMAnalysis", &FSTProcessor::initTMAnalysis)
+			.def("initSAO", &FSTProcessor::initSAO)
+			.def("initGeneration", &FSTProcessor::initGeneration)
+			.def("initPostgeneration", &FSTProcessor::initPostgeneration)
+			.def("initTransliteration", &FSTProcessor::initTransliteration)
+			.def("initBiltrans", &FSTProcessor::initBiltrans)
+			.def("initDecomposition", &FSTProcessor::initDecomposition)
+			/*.def("analysis", &FSTProcessor::analysis)
+			.def("tm_analysis", &FSTProcessor::tm_analysis)
+			.def("generation", &FSTProcessor::generation)
+			.def("postgeneration", &FSTProcessor::postgeneration)
+			.def("intergeneration", &FSTProcessor::intergeneration)
+			.def("transliteration", &FSTProcessor::transliteration)*/
+			.def("biltrans", &FSTProcessor::biltrans)
+			.def("biltransfull", &FSTProcessor::biltransfull)
+			//.def("bilingual", &FSTProcessor::bilingual)
+			.def("bilingual",
+				 [](FSTProcessor& fp, InputFile& input, FILE* output,
+					GenerationMode mode = gm_unknown) {
+					 UFILE* out = u_finit(output, NULL, NULL);
+					 fp.bilingual(input, out, mode);
+				 })
+			.def("biltransWithQueue", &FSTProcessor::biltransWithQueue)
+			.def("biltransWithoutQueue", &FSTProcessor::biltransWithoutQueue)
+			//.def("SAO", &FSTProcessor::SAO)
+			.def("parseICX", &FSTProcessor::parseICX)
+			.def("parseRCX", &FSTProcessor::parseRCX)
+			.def("load", &FSTProcessor::load)
+			.def("valid", &FSTProcessor::valid)
+			.def("setCaseSensitiveMode", &FSTProcessor::setCaseSensitiveMode)
+			.def("setDictionaryCaseMode", &FSTProcessor::setDictionaryCaseMode)
+			.def("setBiltransSurfaceForms", &FSTProcessor::setBiltransSurfaceForms)
+			.def("setIgnoredChars", &FSTProcessor::setIgnoredChars)
+			.def("setRestoreChars", &FSTProcessor::setRestoreChars)
+			.def_property("null_flush", &FSTProcessor::getNullFlush, &FSTProcessor::setNullFlush)
+			.def("setUseDefaultIgnoredChars", &FSTProcessor::setUseDefaultIgnoredChars)
+			.def("setDisplayWeightsMode", &FSTProcessor::setDisplayWeightsMode)
+			.def("setMaxAnalysesValue", &FSTProcessor::setMaxAnalysesValue)
+			.def("setMaxWeightClassesValue", &FSTProcessor::setMaxWeightClassesValue)
+			.def("setCompoundMaxElements", &FSTProcessor::setCompoundMaxElements)
+			.def("getDecompoundingMode", &FSTProcessor::getDecompoundingMode);
 	}
 
 	py::class_<FST>(m, "FST")

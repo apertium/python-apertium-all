@@ -18,6 +18,7 @@ ext = Pybind11Extension(
 )
 ext._add_ldflags(pkgconfig('--libs', 'lttoolbox'))
 ext._add_cflags(pkgconfig('--cflags', 'libxml-2.0'))
+ext._add_cflags(['-DHAVE_DECL_FMEMOPEN']) # TODO: HACK
 
 setup(
     name="lttoolbox",
