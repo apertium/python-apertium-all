@@ -1,8 +1,10 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/operators.h>
+#include <pybind11/iostream.h>
 
 namespace py = pybind11;
+using namespace pybind11::literals;
 
 #include <lttoolbox/acx.h>
 #include <lttoolbox/alphabet.h>
@@ -12,6 +14,41 @@ namespace py = pybind11;
 #include <lttoolbox/input_file.h>
 #include <lttoolbox/string_utils.h>
 #include <lttoolbox/transducer.h>
+
+class TextOutput {
+public:
+	UFILE* fp;
+	TextOutput(std::string& fn, bool append) {
+		fp = u_fopen(fn.c_str(), append ? "ab" : "wb", NULL, NULL);
+		// TODO: error handling
+	}
+	~TextOutput() {
+		u_fflush(fp);
+		u_fclose(fp);
+	}
+};
+
+class InputArchive {
+public:
+	FILE* fp;
+	InputArchive(std::string& filename) {
+		fp = fopen(filename.c_str(), "rb");
+	}
+	~InputArchive() {
+		fclose(fp);
+	}
+};
+
+class OutputArchive {
+public:
+	FILE* fp;
+	OutputArchive(std::string& filename) {
+		fp = fopen(filename.c_str(), "wb");
+	}
+	~OutputArchive() {
+		fclose(fp);
+	}
+};
 
 // class for backwards compatibility with old SWIG bindings
 class FST: public FSTProcessor {
@@ -182,6 +219,52 @@ PYBIND11_MODULE(lttoolbox, m) {
 			.def("finishWBlank", &InputFile::finishWBlank)
 			.def("readBlank", &InputFile::readBlank);
 
+		py::class_<InputArchive>(io, "InputArchive")
+			.def(py::init<std::string&>())
+			.def("read_u64",
+				 [](InputArchive& self) {
+					 return read_u64(self.fp);
+				 })
+			.def("read_u64_le",
+				 [](InputArchive& self) {
+					 return read_u64_le(self.fp);
+				 })
+			.def("multibyte_read",
+				 [](InputArchive& self) {
+					 return Compression::multibyte_read(self.fp);
+				 })
+			.def("string_read",
+				 [](InputArchive& self) {
+					 return Compression::string_read(self.fp);
+				 })
+			.def("long_multibyte_read",
+				 [](InputArchive& self) {
+					 return Compression::long_multibyte_read(self.fp);
+				 });
+
+		py::class_<OutputArchive>(io, "OutputArchive")
+			.def(py::init<std::string&>())
+			.def("write_u64",
+				 [](OutputArchive& self, uint64_t value) {
+					 write_u64(self.fp, value);
+				 })
+			.def("write_u64_le",
+				 [](OutputArchive& self, uint64_t value) {
+					 write_u64_le(self.fp, value);
+				 })
+			.def("multibyte_write",
+				 [](OutputArchive& self, unsigned int value) {
+					 Compression::multibyte_write(value, self.fp);
+				 })
+			.def("string_write",
+				 [](OutputArchive& self, UStringView str) {
+					 Compression::string_write(str, self.fp);
+				 })
+			.def("long_multibyte_write",
+				 [](OutputArchive& self, double value) {
+					 Compression::long_multibyte_write(value, self.fp);
+				 });
+
 		io.attr("HEADER_LTTOOLBOX") = HEADER_LTTOOLBOX;
 		py::enum_<LT_FEATURES>(io, "LT_FEATURES")
 			.value("LTF_UNKNOWN", LT_FEATURES::LTF_UNKNOWN)
@@ -194,27 +277,6 @@ PYBIND11_MODULE(lttoolbox, m) {
 			.value("TDF_UNKNOWN", TD_FEATURES::TDF_UNKNOWN)
 			.value("TDF_RESERVED", TD_FEATURES::TDF_RESERVED)
 			.export_values();
-
-		io.def("write_u64", py::overload_cast<FILE*, uint64_t>(&write_u64));
-		io.def("write_u64_le",
-			   [](FILE* out, uint64_t value) {
-				   write_u64_le(out, value);
-			   });
-		io.def("read_u64", py::overload_cast<FILE*>(&read_u64));
-		io.def("read_u64_le",
-			   [](FILE* in) {
-				   return read_u64_le(in);
-			   });
-		io.def("multibyte_write",
-			   py::overload_cast<unsigned int, FILE*>(&Compression::multibyte_write));
-		io.def("multibyte_read",
-			   py::overload_cast<FILE*>(&Compression::multibyte_read));
-		io.def("string_write", &Compression::string_write);
-		io.def("string_read", &Compression::string_read);
-		io.def("long_multibyte_write",
-			   py::overload_cast<const double&, FILE*>(&Compression::long_multibyte_write));
-		io.def("long_multibyte_read",
-			   py::overload_cast<FILE*>(&Compression::long_multibyte_read));
 	}
 
 	{
@@ -238,9 +300,19 @@ PYBIND11_MODULE(lttoolbox, m) {
 				 })
 			.def("isSymbolDefined", &Alphabet::isSymbolDefined)
 			.def("__len__", &Alphabet::size)
-			.def("write", &Alphabet::write)
-			.def("read", &Alphabet::read)
-			//.def("writeSymbol", &Alphabet::writeSymbol) // TODO: need UFILE
+			.def("write",
+				 [](Alphabet& self, OutputArchive& output) {
+					 self.write(output.fp);
+				 })
+			.def("read",
+				 [](Alphabet& self, InputArchive& input) {
+					 self.read(input.fp);
+				 })
+			.def("writeSymbol",
+				 [](Alphabet& a, int32_t symbol, std::string& fn, bool append) {
+					 TextOutput o(fn, append);
+					 a.writeSymbol(symbol, o.fp);
+				 })
 			.def("getSymbol",
 				 [](Alphabet& a, int32_t symbol) {
 					 UString s;
@@ -291,8 +363,14 @@ PYBIND11_MODULE(lttoolbox, m) {
 			.def("__len__", &Transducer::size)
 			.def("numberOfTransitions", &Transducer::numberOfTransitions)
 			.def("getStateSize", &Transducer::getStateSize)
-			.def("write", &Transducer::write)
-			.def("read", &Transducer::read)
+			.def("write",
+				 [](Transducer& self, OutputArchive& output) {
+					 self.write(output.fp);
+				 })
+			.def("read",
+				 [](Transducer& self, InputArchive& input) {
+					 self.read(input.fp);
+				 })
 			.def("unionWith", &Transducer::unionWith)
 			.def("appendDotStar", &Transducer::appendDotStar)
 			.def("moveLemqsLast", &Transducer::moveLemqsLast)
@@ -349,19 +427,21 @@ PYBIND11_MODULE(lttoolbox, m) {
 			.def("transliteration", &FSTProcessor::transliteration)*/
 			.def("biltrans", &FSTProcessor::biltrans)
 			.def("biltransfull", &FSTProcessor::biltransfull)
-			//.def("bilingual", &FSTProcessor::bilingual)
 			.def("bilingual",
-				 [](FSTProcessor& fp, InputFile& input, FILE* output,
-					GenerationMode mode = gm_unknown) {
-					 UFILE* out = u_finit(output, NULL, NULL);
-					 fp.bilingual(input, out, mode);
-				 })
+				 [](FSTProcessor& self, InputFile& input, std::string& fname,
+					GenerationMode mode, bool append) {
+					 TextOutput o(fname, append);
+					 self.bilingual(input, o.fp, mode);
+				 }, "input"_a, "fname"_a, "mode"_a=gm_unknown, "append"_a=false)
 			.def("biltransWithQueue", &FSTProcessor::biltransWithQueue)
 			.def("biltransWithoutQueue", &FSTProcessor::biltransWithoutQueue)
 			//.def("SAO", &FSTProcessor::SAO)
 			.def("parseICX", &FSTProcessor::parseICX)
 			.def("parseRCX", &FSTProcessor::parseRCX)
-			.def("load", &FSTProcessor::load)
+			.def("load",
+				 [](FSTProcessor& self, InputArchive& input) {
+					 self.load(input.fp);
+				 })
 			.def("valid", &FSTProcessor::valid)
 			.def("setCaseSensitiveMode", &FSTProcessor::setCaseSensitiveMode)
 			.def("setDictionaryCaseMode", &FSTProcessor::setDictionaryCaseMode)
