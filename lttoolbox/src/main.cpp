@@ -8,7 +8,10 @@ using namespace pybind11::literals;
 
 #include <lttoolbox/acx.h>
 #include <lttoolbox/alphabet.h>
+#include <lttoolbox/att_compiler.h>
+#include <lttoolbox/compiler.h>
 #include <lttoolbox/compression.h>
+#include <lttoolbox/expander.h>
 #include <lttoolbox/file_utils.h>
 #include <lttoolbox/fst_processor.h>
 #include <lttoolbox/input_file.h>
@@ -348,7 +351,14 @@ PYBIND11_MODULE(lttoolbox, m) {
 			.def("getFinals", &Transducer::getFinals)
 			.def("getTransitions", &Transducer::getTransitions)
 			.def("reverse", &Transducer::reverse)
-			//.def("show", &Transducer::show) // TODO: need UFILE
+			.def("show",
+				 [](Transducer& self, Alphabet& alpha, std::string& fname,
+					bool append, int epsilon_tag, bool hfst) {
+					 TextOutput o(fname, append);
+					 self.show(alpha, o.fp, epsilon_tag, hfst);
+				 },
+				 "alpha"_a, "fname"_a, "append"_a=false, "epsilon_tag"_a=0,
+				 "hfst"_a=false)
 			.def("determinize", &Transducer::determinize)
 			.def("minimize", &Transducer::minimize)
 			.def("optional", &Transducer::optional)
@@ -385,6 +395,52 @@ PYBIND11_MODULE(lttoolbox, m) {
 			.def("applyACX", &Transducer::applyACX);
 
 		fst.def("readACX", &readACX);
+		fst.def("writeTransducerSet",
+				[](OutputArchive& output, UStringView letters,
+				   Alphabet& alpha, std::map<UString, Transducer>& trans) {
+					writeTransducerSet(output.fp, letters, alpha, trans);
+				});
+		fst.def("readTransducerSet",
+				[](InputArchive& input) {
+					std::set<UChar32> letters;
+					Alphabet alpha;
+					std::map<UString, Transducer> trans;
+					readTransducerSet(input.fp, letters, alpha, trans);
+					return py::make_tuple(letters, alpha, trans);
+				});
+	}
+
+	{
+		auto comp = m.def_submodule("compiler", "blah");
+
+		py::class_<Compiler>(comp, "XMLCompiler")
+			.def(py::init<>())
+			.def("parse", &Compiler::parse)
+			.def("parseACX", &Compiler::parseACX)
+			.def("write",
+				 [](Compiler& self, OutputArchive& output) {
+					 self.write(output.fp);
+				 })
+			.def("setKeepBoundaries", &Compiler::setKeepBoundaries)
+			.def("setJobs", &Compiler::setJobs)
+			.def("setMaxSectionEntries", &Compiler::setMaxSectionEntries)
+			.def("setVerbose", &Compiler::setVerbose)
+			.def("setAltValue", &Compiler::setAltValue)
+			.def("setVariantValue", &Compiler::setVariantValue)
+			.def("setVariantLeftValue", &Compiler::setVariantLeftValue)
+			.def("setVariantRightValue", &Compiler::setVariantRightValue)
+			.def("setEntryDebugging", &Compiler::setEntryDebugging);
+
+		py::class_<AttCompiler>(comp, "ATTCompiler")
+			.def(py::init<>())
+			.def("extract_transducer", &AttCompiler::extract_transducer)
+			.def("parse", &AttCompiler::parse)
+			.def("write",
+				 [](AttCompiler& self, OutputArchive& output) {
+					 self.write(output.fp);
+				 })
+			.def("setHfstSymbols", &AttCompiler::setHfstSymbols)
+			.def("setSplitting", &AttCompiler::setSplitting);
 	}
 
 	{
@@ -419,12 +475,42 @@ PYBIND11_MODULE(lttoolbox, m) {
 			.def("initTransliteration", &FSTProcessor::initTransliteration)
 			.def("initBiltrans", &FSTProcessor::initBiltrans)
 			.def("initDecomposition", &FSTProcessor::initDecomposition)
-			/*.def("analysis", &FSTProcessor::analysis)
-			.def("tm_analysis", &FSTProcessor::tm_analysis)
-			.def("generation", &FSTProcessor::generation)
-			.def("postgeneration", &FSTProcessor::postgeneration)
-			.def("intergeneration", &FSTProcessor::intergeneration)
-			.def("transliteration", &FSTProcessor::transliteration)*/
+			.def("analysis",
+				 [](FSTProcessor& self, InputFile& input, std::string& fname,
+					bool append) {
+					 TextOutput o(fname, append);
+					 self.analysis(input, o.fp);
+				 }, "input"_a, "fname"_a, "append"_a=false)
+			.def("tm_analysis",
+				 [](FSTProcessor& self, InputFile& input, std::string& fname,
+					bool append) {
+					 TextOutput o(fname, append);
+					 self.tm_analysis(input, o.fp);
+				 }, "input"_a, "fname"_a, "append"_a=false)
+			.def("generation",
+				 [](FSTProcessor& self, InputFile& input, std::string& fname,
+					GenerationMode mode, bool append) {
+					 TextOutput o(fname, append);
+					 self.generation(input, o.fp, mode);
+				 }, "input"_a, "fname"_a, "mode"_a=gm_unknown, "append"_a=false)
+			.def("postgeneration",
+				 [](FSTProcessor& self, InputFile& input, std::string& fname,
+					bool append) {
+					 TextOutput o(fname, append);
+					 self.postgeneration(input, o.fp);
+				 }, "input"_a, "fname"_a, "append"_a=false)
+			.def("intergeneration",
+				 [](FSTProcessor& self, InputFile& input, std::string& fname,
+					bool append) {
+					 TextOutput o(fname, append);
+					 self.intergeneration(input, o.fp);
+				 }, "input"_a, "fname"_a, "append"_a=false)
+			.def("transliteration",
+				 [](FSTProcessor& self, InputFile& input, std::string& fname,
+					bool append) {
+					 TextOutput o(fname, append);
+					 self.transliteration(input, o.fp);
+				 }, "input"_a, "fname"_a, "append"_a=false)
 			.def("biltrans", &FSTProcessor::biltrans)
 			.def("biltransfull", &FSTProcessor::biltransfull)
 			.def("bilingual",
@@ -435,7 +521,12 @@ PYBIND11_MODULE(lttoolbox, m) {
 				 }, "input"_a, "fname"_a, "mode"_a=gm_unknown, "append"_a=false)
 			.def("biltransWithQueue", &FSTProcessor::biltransWithQueue)
 			.def("biltransWithoutQueue", &FSTProcessor::biltransWithoutQueue)
-			//.def("SAO", &FSTProcessor::SAO)
+			.def("SAO",
+				 [](FSTProcessor& self, InputFile& input, std::string& fname,
+					bool append) {
+					 TextOutput o(fname, append);
+					 self.SAO(input, o.fp);
+				 }, "input"_a, "fname"_a, "append"_a=false)
 			.def("parseICX", &FSTProcessor::parseICX)
 			.def("parseRCX", &FSTProcessor::parseRCX)
 			.def("load",
@@ -455,6 +546,20 @@ PYBIND11_MODULE(lttoolbox, m) {
 			.def("setMaxWeightClassesValue", &FSTProcessor::setMaxWeightClassesValue)
 			.def("setCompoundMaxElements", &FSTProcessor::setCompoundMaxElements)
 			.def("getDecompoundingMode", &FSTProcessor::getDecompoundingMode);
+
+		py::class_<Expander>(proc, "Expander")
+			.def(py::init<>())
+			.def("expand",
+				 [](Expander& self, std::string& infile, std::string& outfile,
+					bool append) {
+					 TextOutput o(outfile, append);
+					 self.expand(infile, o.fp);
+				 }, "infile"_a, "outfile"_a, "append"_a=false)
+			.def("setAltValue", &Expander::setAltValue)
+			.def("setVariantValue", &Expander::setVariantValue)
+			.def("setVariantLeftValue", &Expander::setVariantLeftValue)
+			.def("setVariantRightValue", &Expander::setVariantRightValue)
+			.def("setKeepBoundaries", &Expander::setKeepBoundaries);
 	}
 
 	py::class_<FST>(m, "FST")
