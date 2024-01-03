@@ -15,6 +15,7 @@ using namespace pybind11::literals;
 #include <lttoolbox/file_utils.h>
 #include <lttoolbox/fst_processor.h>
 #include <lttoolbox/input_file.h>
+#include <lttoolbox/regexp_compiler.h>
 #include <lttoolbox/string_utils.h>
 #include <lttoolbox/transducer.h>
 
@@ -407,6 +408,13 @@ PYBIND11_MODULE(lttoolbox, m) {
 					std::map<UString, Transducer> trans;
 					readTransducerSet(input.fp, letters, alpha, trans);
 					return py::make_tuple(letters, alpha, trans);
+				});
+		fst.def("compile_regexp",
+				[](Alphabet& alpha, UStringView regexp) {
+					RegexpCompiler rc;
+					rc.initialize(&alpha);
+					rc.compile(alpha.tokenize(regexp));
+					return rc.getTransducer();
 				});
 	}
 
